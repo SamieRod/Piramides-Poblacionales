@@ -1,0 +1,852 @@
+#Primero siempre hay que activar las librerias
+install.packages("tidyverse")
+install.packages("readxl")
+install.packages("readr")
+install.packages("stringr")
+library(tidyverse)
+library(readxl)
+library(readr)
+library(stringr)
+
+#creamos un directorio de trabajo
+data <- read_xlsx("input/censo2020.xlsx",
+                  skip = 12, col_names = F)
+
+names(data) <- c("id", "edo", "age", "both", "males", "females")
+
+#filter(age != "No especificado") %>% 
+#mutate(pob2 = ifelse(sex == "females", pob/sum(pob), - pob/))
+base_mx <- data %>% filter(is.na(edo) == F) %>% 
+  select(-c("id", "both")) %>% 
+  na.omit() %>% filter(
+    age != "Total",
+    !grepl("De", age),
+    !grepl("85 años", age)
+  ) %>% 
+  mutate(age = str_extract(age, "\\d+")) %>% 
+  gather(key = sex, value = pob, -age, -edo) %>% 
+  type_convert() %>% 
+  mutate(pob2 = ifelse(sex == "females", pob, -pob))
+
+#el simbolo de negacion es ! --> eg. !grepl donde encuentres tal cosa, quitamela
+#recuerda que str es para extraer de cadenas de caracteres 
+
+#aqui lo que hicimos fue crear a los hombres como una varible negativa y las mujeres como positivos para crear una piramide poblacional
+
+# si quieres visualizar la tabla directamente en la consola escribes: print(n = 4000)
+
+#para guardar en un Rdata que nos ayude a no tener que correr todo. Esto dice
+#salva el objeto base_mx, como un documento con el nombre input/en la base_mx con extensión .RData
+save(base_mx, file = "input/base_mx.RData")
+
+#podria ponerse como fill=sex y rellenaria por sexo los colores 
+
+#Grafica normal----
+base_mx %>% 
+  filter(edo == "Total", is.na(age) == FALSE) %>% 
+  ggplot() +
+  geom_bar(aes(x = age, y = pob2 / 1000000, fill = age), stat = "identity",
+           show.legend = F) +
+  coord_flip() +
+  geom_hline(yintercept = 0) +
+  scale_y_continuous(limits = c(-1.25, 1.25), 
+                     breaks = seq(-1.25, 1.25, 0.25),
+                     labels = as.character(
+                       c(
+                         seq(1.25, 0, -0.25),
+                         seq(0.25, 1.25, 0.25)
+                       ))) +
+  scale_x_continuous(
+    limits = c(-1, 101), breaks = seq(0, 100, 5),
+    labels = seq(0, 100, 5)
+  ) +
+  annotate(
+    geom = "text", x = 95, y = -1, label = "Hombres",
+    color = "black", size = 3
+  ) +
+  annotate(
+    geom = "text", x = 95, y = 1, label = "Mujeres",
+    color = "black", size = 3
+  ) +
+  theme_light() +
+  scale_fill_viridis_c(option = "A") +
+  labs(y = "Poblacion (millones)", x = "Edad")
+
+#Salvar la grafica en la carpeta de output como buenas practicas
+ggsave(filename = "output/piramide1.png", dpi = 320)
+
+#Nota el 1.25 lo obtuve sacando el minimo y maximo de mi poblacion                      
+#Para poner texto en nueva capa, debemos ponerlo como un punto en el eje (x,y). Recuerda aqui esta invertido porque rotamos la grafica 
+
+#recuerda: dentro de ggplot las comas es para separar los argumentos
+
+#Tarea: Sacar la proporcion de pob no especificada con respecto a la total por sexo
+#es con el is.na(age) == TRUE y luego dividir respecto a la Pob Total por sexo
+
+###Suma de los No especificados ----
+base_mx_pror <- left_join(
+  base_mx %>% 
+    filter(edo == "Total") %>% 
+    group_by(sex) %>% 
+    mutate(prop = pob / sum(pob)) %>% 
+    filter(is.na(age) == F) %>% 
+    ungroup(),
+  base_mx %>% 
+    filter(edo == "Total", is.na(age) == T) %>% 
+    select(sex, pob_na = pob),
+  by = "sex"
+) %>% 
+  mutate(pob_fin = pob + pob_na * prop) %>% 
+  select(age, sex, pob = pob_fin)
+
+#Diagnosticos para ver las preferencias de Edades. Estos solo son diagnosticos
+### Obtener el Indice de Whipple ----
+left_join(
+  base_mx_pror %>% 
+    filter(
+      age %in% c(25:60),
+      age %% 10 == 0 | age %% 10 == 5 
+    ) %>% 
+    group_by(sex) %>% 
+    summarise(pob_num = sum(pob), .groups = "drop"),
+  base_mx_pror %>% 
+    filter(age %in% c(23:62)) %>% 
+    group_by(sex) %>% 
+    summarise(pob_den = sum(pob), .gropus =
+                "drop"),
+  by = "sex"
+) %>% 
+  #aca ya calculamos el indice de whipple
+  mutate(W = 5 * pob_num / pob_den)
+
+#pob_num: poblacion del numerador 
+#pob_den: pob del denominador 
+#las comas en R es como si fuera un y (y quiero que tmb hagas esto)
+base_mx_myers <- merge(
+  base_mx %>% 
+    filter(edo == "Total", is.na(age) == FALSE) %>% 
+    filter(
+      age %in% c(10:100),
+      age %% 10 == 0) %>% 
+    group_by(sex) %>% 
+    summarise(gp0 = sum(pob), .groups = 
+                "drop"),
+  base_mx %>% 
+    filter(edo == "Total", is.na(age) == FALSE) %>% 
+    filter(
+      age %in% c(10:100),
+      age %% 10 == 1) %>% 
+    group_by(sex) %>% 
+    summarise(gp1 = sum(pob), .groups = 
+                "drop"),
+  base_mx %>% 
+    filter(edo == "Total", is.na(age) == FALSE) %>% 
+    filter(
+      age %in% c(10:100),
+      age %% 10 == 2) %>% 
+    group_by(sex) %>% 
+    summarise(gp2 = sum(pob), .groups = 
+                "drop"),
+  base_mx %>% 
+    filter(edo == "Total", is.na(age) == FALSE) %>% 
+    filter(
+      age %in% c(10:100),
+      age %% 10 == 3) %>% 
+    group_by(sex) %>% 
+    summarise(gp3 = sum(pob), .groups = 
+                "drop"),
+  base_mx %>% 
+    filter(edo == "Total", is.na(age) == FALSE) %>% 
+    filter(
+      age %in% c(10:100),
+      age %% 10 == 4) %>% 
+    group_by(sex) %>% 
+    summarise(gp4 = sum(pob), .groups = 
+                "drop"),
+  base_mx %>% 
+    filter(edo == "Total", is.na(age) == FALSE) %>% 
+    filter(
+      age %in% c(10:100),
+      age %% 10 == 5) %>% 
+    group_by(sex) %>% 
+    summarise(gp5 = sum(pob), .groups = 
+                "drop"),
+  base_mx %>% 
+    filter(edo == "Total", is.na(age) == FALSE) %>% 
+    filter(
+      age %in% c(10:100),
+      age %% 10 == 6) %>% 
+    group_by(sex) %>% 
+    summarise(gp6 = sum(pob), .groups = 
+                "drop"),
+  base_mx %>% 
+    filter(edo == "Total", is.na(age) == FALSE) %>% 
+    filter(
+      age %in% c(10:100),
+      age %% 10 == 7) %>% 
+    group_by(sex) %>% 
+    summarise(gp7 = sum(pob), .groups = 
+                "drop"),
+  base_mx %>% 
+    filter(edo == "Total", is.na(age) == FALSE) %>% 
+    filter(
+      age %in% c(10:100),
+      age %% 10 == 8) %>% 
+    group_by(sex) %>% 
+    summarise(gp8 = sum(pob), .groups = 
+                "drop"),
+  base_mx %>% 
+    filter(edo == "Total", is.na(age) == FALSE) %>% 
+    filter(
+      age %in% c(10:100),
+      age %% 10 == 9) %>% 
+    group_by(sex) %>% 
+    summarise(gp9 = sum(pob), .groups = 
+                "drop"),
+  by = "sex") %>% 
+  mutate(pop10a = c(gp0, gp1, gp2, gp3, gp4, gp5, gp6, gp7, gp8, gp9))
+
+#Correccion. Metodo Myers
+#recuerda este solo es un diagnostico
+#Para el metodo myers ya usamos la base prorateada que ya tiene los na agregados en la poblacion
+#vamos a crear un residuo con una variable digit usando %% es un modulo para 
+#%% significa modulo
+#creamos dos variables nuevas con mutate que son: weights t la poblacion total
+#usamos left join para unir dos data frames x, y. En este caso x suma desde 10 e y suma desde 20 
+myers_tab <- left_join(
+  base_mx_pror %>% 
+    filter(age %in% c(10:80)) %>% 
+    mutate(digit = age %% 10) %>% 
+    group_by(digit) %>% 
+    summarise(step1 = sum(pob), .groups = "drop") %>% 
+    mutate(
+      weights = c(1:10),
+      tot_pop1 = step1 * weights
+    ),
+  base_mx_pror %>% 
+    filter(age %in% c(10:80)) %>% 
+    mutate(digit = age %% 10) %>% 
+    filter(!age %in% c(10:19)) %>% 
+    group_by(digit) %>% 
+    summarise(step2 = sum(pob), .groups = "drop") %>% 
+    mutate(
+      weights = c(9:0),
+      tot_pop2 = step2 * weights),
+  by = "digit"
+) %>% 
+  select(digit, tot_pop1, tot_pop2) %>% 
+  mutate(
+    blended = tot_pop1 + tot_pop2,
+    blend_perc = 100 * blended / sum(blended),
+    deviat = abs(blend_perc - 10)
+  )
+
+#el valor proporcional lo multiplicamos por 100 para que nos mueste el porcentaje 
+
+#el indice se divide entre 2 para que este entre 0 y 90
+#por tanto si el resultado es mayor a 45 podemos inferir que es un mal estimador. en otras palabras hay un sesgo de las edades 
+myers_tab %>% 
+  summarise(myers = sum(deviat) / 2)
+
+#la preferencia digital no es grave auqnue si existe
+
+#Como agrupar por edades quinquenales en R una poblacion por edades desagrupadas
+#clue: crear una etiqueta los grupos que van de 0 a 4, 5 a 9 etc
+
+#Tarea grupos quinquenales ----
+#Paqueterías 
+library(readxl)
+library(readr)
+library(tidyverse)
+library(stringr)
+
+##Grupos quinquenales------
+base_quin <- base_mx %>% 
+  filter(edo == "Total") %>% 
+  select(age, sex, pob) %>% 
+  mutate(grupo_quin = cut(age, breaks = seq(0, 105, 5), 
+                          include.lowest = T,
+                          right= F, 
+                          labels = str_c(paste(seq(0, 100, 5), 
+                                               seq(4, 104, 5), 
+                                               sep = "-"), 
+                                         " años")))
+#prorateo por grupos quinquenales 
+base_quin_pror <- left_join(  
+  base_quin %>%    
+    group_by(sex) %>%  
+    mutate(prop = pob/sum(pob)) %>%  
+    filter(is.na(age)== F) %>%  
+    ungroup(), 
+  base_quin %>%  
+    filter(is.na(age)==T) %>%  
+    select(sex, pob_na = pob), by= "sex") %>%  
+  mutate(pob_fin = pob + pob_na*prop) %>% 
+  select(age, sex, grupo_quin, pob = pob_fin) %>% 
+  mutate(pob =round(pob, digits= 0))
+
+sum_gq <- base_quin_pror %>% 
+  group_by(grupo_quin) %>% 
+  tally(pob) %>% 
+  rename( pob_gq = n)
+
+base_quin <- base_quin %>% 
+  mutate(pob2= ifelse(sex =="females", pob, - pob)) 
+
+##grafica grupos quinquenales----
+base_quin %>% 
+  filter(!is.na(age)) %>% 
+  group_by(grupo_quin) %>%  
+  ggplot()+
+  geom_bar(aes(x= grupo_quin, y= pob2/1000000, fill= grupo_quin),
+           stat = "identity",
+           show.legend= F)+
+  coord_flip()+ 
+  geom_hline(yintercept = 0)+ 
+  scale_y_continuous(limits = c(-6, 6), breaks = seq(-6, 6, 1), 
+                     labels = abs(seq(-6, 6, 1))) %>% 
+  scale_x_discrete(
+    limits = c(-1, 104), breaks = seq(0, 104, 5),
+    labels = seq(0, 104, 5))+
+  annotate(
+    geom = "text", x = 95, y = -1, label = "Hombres",
+    color = "black", size = 3
+  ) +
+  annotate(
+    geom = "text", x = 95, y = 1, label = "Mujeres",
+    color = "black", size = 3
+  ) +
+  theme_light() +
+  scale_fill_viridis_c(option = "A") +
+  labs(y = "Poblacion por grupos quinquenale (millones)", x = "Edad")
+
+
+base_quin %>% 
+  filter(!is.na(age)) %>% 
+  group_by(grupo_quin) %>%  
+  ggplot(aes(x = grupo_quin, y = pob2 / 1000000, fill = grupo_quin)) +
+  geom_bar(stat = "identity", show.legend = FALSE) +
+  coord_flip() +
+  geom_hline(yintercept = 0) +
+  scale_y_continuous(limits = c(-6, 6), breaks = seq(-6, 6, 1), labels = abs(seq(-6, 6, 1))) +
+  scale_x_discrete(
+    limits = c(0, 104), 
+    breaks = seq(0, 104, 5), 
+    labels = seq(0, 104, 5)
+  ) +
+  annotate(
+    geom = "text", x = 104, y = -1, label = "Hombres",
+    color = "black", size = 3
+  ) +
+  annotate(
+    geom = "text", x = 104, y = 1, label = "Mujeres",
+    color = "black", size = 3
+  ) +
+  theme_light() +
+  scale_fill_viridis_c(option = "A") +
+  labs(y = "Población por grupos quinquenales (millones)", x = "Edad")
+
+
+#correcion grupos quinquenales----
+#1. crear una secuencia de referencias numericas a base prorateada
+bins <- seq(0, max(base_mx_pror$age) + 5, by= 5)
+
+#2.crear las etiquetas por edades
+#quiero que me agarres todos menos el numero 22 que es la cola final, por ello usamos lenght bins. que es logitud de bins
+#para preguntarle al vetor cuanto mide usamos la funcion lenght(nombre vector)
+#aca el [-1]-1 significa extrae todo menos este valor y restale 1
+#por eso usamos paste para que peque del bins inferior y el bins con un numero restado
+labels <- paste(bins[-length(bins)], 
+                bins[-1] - 1,
+                sep = "-")
+
+#crear una nueva columna que es age group, puede sobreescribirse la base pror pero yo la puse como pror2, usamos pror porque ya es la que esta prorateada y los na ya estan en la base 
+#aqui usamos FALSE para indicarle que es un intervalo semi cerrado [0,5) no toma el 5, solo de 0 a 4
+base_mx_pror2 <- base_mx_pror %>% 
+  mutate(age_group = cut(age, breaks = bins, 
+                         labels = labels, right = FALSE))
+
+#agrupar por grupos de edad y sumar la poblacion
+#creamos la nueva base por grupos quinquenales 
+base_mx_5 <- base_mx_pror2 %>% 
+  group_by(sex, age_group) %>% 
+  summarise(pob = sum(pob, na.rm = TRUE), 
+            .groups = "drop") %>% 
+  mutate(pob2 = ifelse(sex == "males", -pob, pob))
+
+##Grafico de barras----
+base_mx_5 %>% 
+  ggplot() +
+  geom_bar(aes(x = age_group, y = pob2 / 1000000, fill = age_group),
+           stat = "identity", 
+           show.legend = F
+  ) +
+  coord_flip() +
+  geom_hline(yintercept = 0) +
+  scale_y_continuous(
+    limits = c(-6, 6), 
+    breaks = seq(-6, 6, 1),
+    labels = as.character(c(
+      seq(6, 0, -1),
+      seq(1, 6, 1)
+    ))
+  ) +
+  annotate(
+    geom = "text", x = 20, y = -3, label =
+      "Hombres",
+    color = "black", size = 5
+  ) +
+  annotate(
+    geom = "text", x = 20, y = 3, label =
+      "Mujeres",
+    color = "black", size = 5
+  ) +
+  theme_light() +
+  scale_fill_viridis_d(option = "C") +
+  labs(y = "Poblacion quinquenal (millones)", x = "Edad")
+
+
+#na.rm = TRUE significa remueve los na
+
+#stat identity significa que las barritas esten emparejadas
+#cord.flip es para voltear la grafica de las coordenadas
+# x = 20 porque es el numero de intervalos quinquenales que existen
+
+#02 de Septiembre----
+##metodos de desagrupacion de datos----
+#primero debemos descarbar el paquete remotes y luego lo del siguiente codigo
+install.packages("ungroup")
+install.packages("rstan", repos = c("https://mc-stan.org/r-packages/", getOption("repos")))
+
+remotes::install_github("timriffe/DemoTools")
+
+library(ungroup)
+library(tidyverse)
+
+base_mx_5$pob
+
+#1Creamos una base para los hombres y una para las mujeres de las bases de grupos quinquenales
+base_mx_5H <- base_mx_5 %>% 
+  filter(sex == "males")
+
+base_mx_5M <- base_mx_5 %>% 
+  filter(sex == "females")
+
+#Creamos unas bases desagrupadas nuevamente por eso las bases se llamaran mx_1 y usamos la funcion pclm
+base_mx_1_H <- pclm(x = bins[-length(bins)],
+                    base_mx_5H$pob, nlast = 10)
+
+base_mx_1_M <- pclm(x = bins[-length(bins)],
+                    base_mx_5M$pob, nlast = 10)
+
+base_mx_1 <- rbind(
+  enframe(base_mx_1_H$fitted,
+          name = "age", value = "pob") %>% 
+    mutate(age = c(0:109), sex = "males", 
+           .before = pob),
+  enframe(base_mx_1_M$fitted,
+          name = "age", value = "pob") %>% 
+    mutate(age = c(0:109), sex = "females", 
+           .before = pob)
+) %>% 
+  mutate(pob2 = ifelse(sex == "males", -pob, pob))
+
+#nueva grafica de desagrupados
+base_mx_1 %>% 
+  ggplot() +
+  geom_bar(aes(x = age, y = pob2 / 1000000, fill = age), stat = "identity",
+           show.legend = F) +
+  coord_flip() +
+  geom_hline(yintercept = 0) +
+  scale_y_continuous(limits = c(-1.25, 1.25), 
+                     breaks = seq(-1.25, 1.25, 0.25),
+                     labels = as.character(
+                       c(
+                         seq(1.25, 0, -0.25),
+                         seq(0.25, 1.25, 0.25)
+                       ))) +
+  scale_x_continuous(
+    limits = c(-1, 110), breaks = seq(0, 110, 5),
+    labels = seq(0, 110, 5)
+  ) +
+  annotate(
+    geom = "text", x = 95, y = -1, label = "Hombres",
+    color = "black", size = 3
+  ) +
+  annotate(
+    geom = "text", x = 95, y = 1, label = "Mujeres",
+    color = "black", size = 3
+  ) +
+  theme_light() +
+  scale_fill_viridis_c(option = "A") +
+  labs(y = "Poblacion (millones)", x = "Edad")
+
+
+#Examen ----
+#creamos un directorio de trabajo
+data <- read_xlsx("input/censo2020.xlsx",
+                  skip = 12, col_names = F)
+
+names(data) <- c("id", "edo", "age", "both", "males", "females")
+
+#filter(age != "No especificado") %>% 
+#mutate(pob2 = ifelse(sex == "females", pob/sum(pob), - pob/))
+base_mx <- data %>% filter(is.na(edo) == F) %>% 
+  select(-c("id", "both")) %>% 
+  na.omit() %>% filter(
+    age != "Total",
+    !grepl("De", age),
+    !grepl("85 años", age)
+  ) %>% 
+  mutate(age = str_extract(age, "\\d+")) %>% 
+  gather(key = sex, value = pob, -age, -edo) %>% 
+  type_convert() %>% 
+  mutate(pob2 = ifelse(sex == "females", pob, -pob))
+
+###Suma No especificados ----
+#Edo Mex
+base_mx_pror1 <- left_join(
+  base_mx %>% 
+    filter(edo %in% "México") %>% 
+    group_by(sex) %>% 
+    mutate(prop = pob / sum(pob)) %>% 
+    filter(is.na(age) == F) %>% 
+    ungroup(),
+  base_mx %>% 
+    filter(edo == "Total", is.na(age) == T) %>% 
+    select(sex, pob_na = pob),
+  by = "sex"
+) %>% 
+  mutate(pob_fin = pob + pob_na * prop) %>% 
+  select(age, sex, pob = pob_fin)
+
+#Coahuila
+base_mx_pror2 <- left_join(
+  base_mx %>% 
+    filter(edo %in% "Coahuila de Zaragoza") %>% 
+    group_by(sex) %>% 
+    mutate(prop = pob / sum(pob)) %>% 
+    filter(is.na(age) == F) %>% 
+    ungroup(),
+  base_mx %>% 
+    filter(edo == "Total", is.na(age) == T) %>% 
+    select(sex, pob_na = pob),
+  by = "sex"
+) %>% 
+  mutate(pob_fin = pob + pob_na * prop) %>% 
+  select(age, sex, pob = pob_fin)
+
+#Diagnosticos para ver las preferencias de Edades. Estos solo son diagnosticos
+###Indice de Whipple----
+#Mexico
+left_join(
+  base_mx_pror1 %>% 
+    filter(
+      age %in% c(25:60),
+      age %% 10 == 0 | age %% 10 == 5 
+    ) %>% 
+    group_by(sex) %>% 
+    summarise(pob_num = sum(pob), .groups = "drop"),
+  base_mx_pror1 %>% 
+    filter(age %in% c(23:62)) %>% 
+    group_by(sex) %>% 
+    summarise(pob_den = sum(pob), .gropus =
+                "drop"),
+  by = "sex"
+) %>% 
+  #aca ya calculamos el indice de whipple
+  mutate(W = 5 * pob_num / pob_den)
+
+#Coahuila
+left_join(
+  base_mx_pror2 %>% 
+    filter(
+      age %in% c(25:60),
+      age %% 10 == 0 | age %% 10 == 5 
+    ) %>% 
+    group_by(sex) %>% 
+    summarise(pob_num = sum(pob), .groups = "drop"),
+  base_mx_pror2 %>% 
+    filter(age %in% c(23:62)) %>% 
+    group_by(sex) %>% 
+    summarise(pob_den = sum(pob), .gropus =
+                "drop"),
+  by = "sex"
+) %>% 
+  #aca ya calculamos el indice de whipple
+  mutate(W = 5 * pob_num / pob_den)
+
+#Evaluacion no específicados e índice de Whipple----
+##NAS
+#Edo Mex
+left_join(
+  base_mx %>% 
+    filter(edo %in% "México", is.na(age) == F) %>% 
+    group_by(sex) %>% 
+    summarise(pob = sum(pob), .groups = 'drop'),
+  base_mx %>% 
+    filter(edo %in% "México", is.na(age) == T) %>% 
+    select(sex, pob_na=pob),
+  by = "sex") %>% 
+  mutate(prop = 100 * pob_na / pob)
+
+#Coahuila
+left_join(
+  base_mx %>% 
+    filter(edo %in% "Coahuila de Zaragoza", is.na(age) == F) %>% 
+    group_by(sex) %>% 
+    summarise(pob = sum(pob), .groups = 'drop'),
+  base_mx %>% 
+    filter(edo %in% "Coahuila de Zaragoza", is.na(age) == T) %>% 
+    select(sex, pob_na=pob),
+  by = "sex") %>% 
+  mutate(prop = 100 * pob_na / pob)
+
+#Correccion preferencia digital ----
+##Mexico----
+base_quinMex <- base_mx %>% 
+  filter(edo == "México") %>% 
+  select(age, sex, pob) %>% 
+  mutate(grupo_quin = cut(age, breaks = seq(0, 105, 5), 
+                          include.lowest = T,
+                          right= F, 
+                          labels = str_c(paste(seq(0, 100, 5), 
+                                               seq(4, 104, 5), 
+                                               sep = "-"), 
+                                         " años")))
+#prorateo por grupos quinquenales 
+base_quin_pror1 <- left_join(  
+  base_quinMex %>%    
+    group_by(sex) %>%  
+    mutate(prop = pob/sum(pob)) %>%  
+    filter(is.na(age)== F) %>%  
+    ungroup(), 
+  base_quinMex %>%  
+    filter(is.na(age)==T) %>%  
+    select(sex, pob_na = pob), by= "sex") %>%  
+  mutate(pob_fin = pob + pob_na*prop) %>% 
+  select(age, sex, grupo_quin, pob = pob_fin) %>% 
+  mutate(pob =round(pob, digits= 0))
+
+sum_gq1 <- base_quin_pror1 %>% 
+  group_by(grupo_quin) %>% 
+  tally(pob) %>% 
+  rename( pob_gq = n)
+
+base_quinMex1 <- base_quinMex %>% 
+  mutate(pob2= ifelse(sex =="females", pob, - pob)) 
+
+
+#Correcion grupos quinquenales
+#1. crear una secuencia de referencias numericas a base prorateada
+bins <- seq(0, max(base_mx_pror1$age) + 5, by= 5)
+
+#2.crear las etiquetas por edades
+#quiero que me agarres todos menos el numero 22 que es la cola final, por ello usamos lenght bins. que es logitud de bins
+#para preguntarle al vetor cuanto mide usamos la funcion lenght(nombre vector)
+#aca el [-1]-1 significa extrae todo menos este valor y restale 1
+#por eso usamos paste para que peque del bins inferior y el bins con un numero restado
+labels <- paste(bins[-length(bins)], 
+                bins[-1] - 1,
+                sep = "-")
+
+#crear una nueva columna que es age group, puede sobreescribirse la base pror pero yo la puse como pror2, usamos pror porque ya es la que esta prorateada y los na ya estan en la base 
+#aqui usamos FALSE para indicarle que es un intervalo semi cerrado [0,5) no toma el 5, solo de 0 a 4
+base_mx_prorMex <- base_mx_pror1 %>% 
+  mutate(age_group = cut(age, breaks = bins, 
+                         labels = labels, right = FALSE))
+
+#agrupar por grupos de edad y sumar la poblacion
+#creamos la nueva base por grupos quinquenales 
+base_mx_5_Mex <- base_mx_prorMex %>% 
+  group_by(sex, age_group) %>% 
+  summarise(pob = sum(pob, na.rm = TRUE), 
+            .groups = "drop") %>% 
+  mutate(pob2 = ifelse(sex == "males", -pob, pob))
+
+#Desagrupada
+install.packages("ungroup")
+install.packages("rstan", repos = c("https://mc-stan.org/r-packages/", getOption("repos")))
+
+remotes::install_github("timriffe/DemoTools")
+
+library(ungroup)
+library(tidyverse)
+
+base_mx_5$pob
+
+#1Creamos una base para los hombres y una para las mujeres de las bases de grupos quinquenales
+base_mx_5HMex <- base_mx_5_Mex %>% 
+  filter(sex == "males")
+
+base_mx_5MMex <- base_mx_5_Mex %>% 
+  filter(sex == "females")
+
+#Creamos unas bases desagrupadas nuevamente por eso las bases se llamaran mx_1 y usamos la funcion pclm
+base_mx_Mex_H <- pclm(x = bins[-length(bins)],
+                    base_mx_5HMex$pob, nlast = 10)
+
+base_mx_Mex_M <- pclm(x = bins[-length(bins)],
+                    base_mx_5MMex$pob, nlast = 10)
+
+base_mx_1Mex <- rbind(
+  enframe(base_mx_Mex_H$fitted,
+          name = "age", value = "pob") %>% 
+    mutate(age = c(0:109), sex = "males", 
+           .before = pob),
+  enframe(base_mx_Mex_M$fitted,
+          name = "age", value = "pob") %>% 
+    mutate(age = c(0:109), sex = "females", 
+           .before = pob)
+) %>% 
+  mutate(pob2 = ifelse(sex == "males", -pob, pob))
+
+#nueva grafica de desagrupados
+base_mx_1Mex %>% 
+  ggplot() +
+  geom_bar(aes(x=age, y=pob2/100000,fill=age),
+           stat='identity', show.legend = F)+
+  coord_flip()+
+  geom_hline(yintercept=0)+
+  scale_y_continuous(
+    limits=c(-2, 2),
+    breaks=seq(-2,2,0.25),
+    labels=as.character(c(seq(2,0,-0.25),
+                          seq(0.25,2,0.25))))+
+  scale_x_continuous(limits=c(-1,110), breaks = seq(0,110,5),
+                     labels = seq(0,110,5))+
+  annotate(
+    geom="text", x=95, y =-1, label= "Hombres",color="black",size=3
+  )  +
+  annotate(
+    geom="text", x=95, y =1, label= "Mujeres",color="black",size=3
+  )+
+  theme_light()+
+  scale_fill_viridis_c(option="G")+
+  labs(y="Poblacion Edo de México (cientos de miles)", x="Edad", 
+       title = "Pirámide Poblacional suavizada del Estado de México")
+
+##Coahuila ----
+base_quinCoah <- base_mx %>% 
+  filter(edo == "Coahuila de Zaragoza") %>% 
+  select(age, sex, pob) %>% 
+  mutate(grupo_quin = cut(age, breaks = seq(0, 105, 5), 
+                          include.lowest = T,
+                          right= F, 
+                          labels = str_c(paste(seq(0, 100, 5), 
+                                               seq(4, 104, 5), 
+                                               sep = "-"), 
+                                         " años")))
+#prorateo por grupos quinquenales 
+base_quin_pror1.1 <- left_join(  
+  base_quinCoah %>%    
+    group_by(sex) %>%  
+    mutate(prop = pob/sum(pob)) %>%  
+    filter(is.na(age)== F) %>%  
+    ungroup(), 
+  base_quinCoah %>%  
+    filter(is.na(age)==T) %>%  
+    select(sex, pob_na = pob), by= "sex") %>%  
+  mutate(pob_fin = pob + pob_na*prop) %>% 
+  select(age, sex, grupo_quin, pob = pob_fin) %>% 
+  mutate(pob =round(pob, digits= 0))
+
+sum_gq1 <- base_quin_pror1.1 %>% 
+  group_by(grupo_quin) %>% 
+  tally(pob) %>% 
+  rename( pob_gq = n)
+
+base_quinCoah1 <- base_quinCoah %>% 
+  mutate(pob2= ifelse(sex =="females", pob, - pob)) 
+
+bins <- seq(0, max(base_mx_pror2$age) + 5, by= 5)
+
+labels <- paste(bins[-length(bins)], 
+                bins[-1] - 1,
+                sep = "-")
+
+base_mx_prorCoah <- base_mx_pror2 %>% 
+  mutate(age_group = cut(age, breaks = bins, 
+                         labels = labels, right = FALSE))
+
+base_mx_5_Coah <- base_mx_prorCoah %>% 
+  group_by(sex, age_group) %>% 
+  summarise(pob = sum(pob, na.rm = TRUE), 
+            .groups = "drop") %>% 
+  mutate(pob2 = ifelse(sex == "males", -pob, pob))
+
+base_mx_5HCoah <- base_mx_5_Coah %>% 
+  filter(sex == "males")
+
+base_mx_5MCoah <- base_mx_5_Coah %>% 
+  filter(sex == "females")
+
+#Creamos unas bases desagrupadas nuevamente por eso las bases se llamaran mx_1 y usamos la funcion pclm
+base_mx_Coah_H <- pclm(x = bins[-length(bins)],
+                      base_mx_5HCoah$pob, nlast = 10)
+
+base_mx_Coah_M <- pclm(x = bins[-length(bins)],
+                      base_mx_5MCoah$pob, nlast = 10)
+
+base_mx_1Coah <- rbind(
+  enframe(base_mx_Coah_H$fitted,
+          name = "age", value = "pob") %>% 
+    mutate(age = c(0:109), sex = "males", 
+           .before = pob),
+  enframe(base_mx_Coah_M$fitted,
+          name = "age", value = "pob") %>% 
+    mutate(age = c(0:109), sex = "females", 
+           .before = pob)
+) %>% 
+  mutate(pob2 = ifelse(sex == "males", -pob, pob))
+
+#nueva grafica de desagrupados
+base_mx_1Coah %>% 
+  ggplot() +
+  geom_bar(aes(x=age, y=pob2/10000,fill=age),
+           stat='identity', show.legend = F)+
+  coord_flip()+
+  geom_hline(yintercept=0)+
+  scale_y_continuous(
+    limits=c(-5, 5),
+    breaks=seq(-5,5,0.5),
+    labels=as.character(c(seq(5, 0,-0.5),
+                          seq(0.5, 5,0.5))))+
+  scale_x_continuous(limits=c(-1,110), breaks = seq(0,110,5),
+                     labels = seq(0,110,5))+
+  annotate(
+    geom="text", x=95, y =-1, label= "Hombres",color="black",size=3
+  )  +
+  annotate(
+    geom="text", x=95, y =1, label= "Mujeres",color="black",size=3
+  )+
+  theme_light()+
+  scale_fill_viridis_c(option="F")+
+  labs(y="Poblacion Coahuila de Zaragoza (cientos de miles)", x="Edad", 
+       title = "Pirámide Poblacional suavizada de Coahuila")
+
+
+#Example
+base_mx_1Mex %>% 
+  ggplot() +
+  geom_bar(aes(x=age, y=pob2/100000,fill=age),
+           stat='identity', show.legend = F)+
+  coord_flip()+
+  geom_hline(yintercept=0)+
+  scale_y_continuous(
+    limits=c(-2, 2),
+    breaks=seq(-2,2,0.25),
+    labels=as.character(c(seq(2,0,-0.25),
+                          seq(0.25,2,0.25))))+
+  scale_x_continuous(limits=c(-1,110), breaks = seq(0,110,5),
+                     labels = seq(0,110,5))+
+  annotate(
+    geom="text", x=95, y =-1, label= "Hombres",color="black",size=3
+  )  +
+  annotate(
+    geom="text", x=95, y =1, label= "Mujeres",color="black",size=3
+  )+
+  theme_light()+
+  scale_fill_viridis_c(option="G")+
+  labs(y="Poblacion Edo de México (cientos de miles)", x="Edad", 
+       title = "Pirámide Poblacional suavizada del Estado de México")
