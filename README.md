@@ -43,7 +43,7 @@ piramides_poblacionales_RProject/
 Coloca el archivo original del Censo 2020 en:
 
 ```text
-data/raw/censo2020.xlsx
+data/censo2020.xlsx
 ```
 
 ## Paquetes
