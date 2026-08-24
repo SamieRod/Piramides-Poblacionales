@@ -53,7 +53,8 @@ install.packages(c(
   "tidyverse",
   "readxl",
   "scales",
-  "remotes"
+  "remotes",
+  "ungroup"
 ))
 
 remotes::install_github("timriffe/DemoTools")
